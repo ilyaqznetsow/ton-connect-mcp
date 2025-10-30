@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.1] - 2024-10-31
+
+### Fixed
+- **Critical**: Suppressed TON Connect SDK console output that was breaking JSON-RPC protocol
+  - TON Connect SDK was logging events to stdout, causing "Unexpected token" errors
+  - Added console.log suppression to prevent stdout corruption
+  - Added proper event listeners to handle status changes silently
+  - MCP protocol now works reliably without JSON parsing errors
+  - Optional DEBUG_TON_CONNECT environment variable for development debugging
+
 ## [1.2.0] - 2024-10-30
 
 ### Added

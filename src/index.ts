@@ -9,11 +9,25 @@ import { beginCell, Address } from '@ton/ton';
 const DEFAULT_MANIFEST_URL = 'https://app.palette.finance/tonconnect-manifest.json';
 const MANIFEST_URL = process.env.TONCONNECT_MANIFEST_URL || DEFAULT_MANIFEST_URL;
 
+// Suppress all console.log output to prevent JSON-RPC corruption
+// TON Connect SDK may log to stdout, which breaks MCP protocol
+const originalConsoleLog = console.log;
+console.log = () => {}; // Suppress stdout logging
+
 // Create single TON Connect instance
 const storage = new MemoryStorage();
 const connector = new TonConnect({
   manifestUrl: MANIFEST_URL,
   storage,
+});
+
+// Set up event listeners to prevent unhandled events from being logged
+connector.onStatusChange((walletInfo) => {
+  // Silently handle status changes
+  // Log to stderr only if needed for debugging
+  if (process.env.DEBUG_TON_CONNECT) {
+    console.error('[TON Connect] Status changed:', walletInfo ? 'connected' : 'disconnected');
+  }
 });
 
 // Try to restore previous connection
@@ -26,7 +40,7 @@ try {
 // Create MCP server
 const server = new McpServer({
   name: 'ton-connect-mcp',
-  version: '1.2.0',
+  version: '1.2.1',
 });
 
 /**
