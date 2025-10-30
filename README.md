@@ -189,6 +189,33 @@ Try these in your AI assistant:
 3. "What's my wallet address?"
 4. "Send 0.1 TON to EQD..."
 
+## Troubleshooting
+
+### "Server startup error: EADDRINUSE" or "port 3000"
+
+This means you have an old HTTP version cached. Fix:
+
+```bash
+# Clear npm cache and reinstall
+npm cache clean --force
+npm uninstall -g ton-connect-mcp
+npm install -g ton-connect-mcp@latest
+
+# Or use npx with latest
+# In Cursor config, use:
+{
+  "command": "npx",
+  "args": ["-y", "ton-connect-mcp@latest"]
+}
+```
+
+### Cursor not seeing the server
+
+1. Restart Cursor completely
+2. Check Settings → Features → Model Context Protocol
+3. Verify the config is correct
+4. Try removing and re-adding the server
+
 ## Implementation Details
 
 - **Transport**: stdio (standard input/output) - auto-managed by MCP clients
