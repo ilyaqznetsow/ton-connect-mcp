@@ -1,6 +1,6 @@
 {
   "name": "ton-connect-mcp",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Zero-setup MCP server for TON Connect wallet integration. Works instantly with Cursor, Claude, and other AI assistants.",
   "type": "module",
   "main": "dist/index.js",
@@ -49,6 +49,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@ton/core": "^0.62.0",
+    "@ton/ton": "^16.0.0",
     "@tonconnect/sdk": "^2.0.0",
     "zod": "^3.22.4"
   },

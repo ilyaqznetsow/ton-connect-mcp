@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import TonConnect, { UserRejectsError, isWalletInfoRemote, isWalletInfoInjectable } from '@tonconnect/sdk';
 import { MemoryStorage } from './storage.js';
+import { beginCell, Address } from '@ton/ton';
 
 const DEFAULT_MANIFEST_URL = 'https://app.palette.finance/tonconnect-manifest.json';
 const MANIFEST_URL = process.env.TONCONNECT_MANIFEST_URL || DEFAULT_MANIFEST_URL;
@@ -25,7 +26,7 @@ try {
 // Create MCP server
 const server = new McpServer({
   name: 'ton-connect-mcp',
-  version: '1.1.0',
+  version: '1.2.0',
 });
 
 /**
@@ -416,49 +417,227 @@ server.registerTool(
   'build_jetton_transfer_payload',
   {
     title: 'Build Jetton Transfer Payload',
-    description: 'Helper to build a payload for jetton (token) transfers. Returns base64 payload to use with send_transaction.',
+    description: 'Build a payload for jetton (token) transfers. Returns base64 BOC payload ready to use with send_transaction.',
     inputSchema: {
-      jetton_wallet_address: z.string().describe('Your jetton wallet address (not the jetton master address)'),
-      recipient_address: z.string().describe('Recipient TON wallet address'),
-      jetton_amount: z.string().describe('Amount of jettons to transfer in smallest units (like nanoTON for TON)'),
-      forward_ton_amount: z.string().optional().describe('Amount of TON to forward with transfer (in nanoTON). Default: "1" (0.000000001 TON)'),
-      comment: z.string().optional().describe('Optional text comment for the transfer'),
+      recipient_address: z.string().describe('Recipient TON wallet address (where jettons will be sent)'),
+      jetton_amount: z.string().describe('Amount of jettons to transfer in smallest units (e.g., "1000000" for 1 USDT with 6 decimals)'),
+      response_address: z.string().optional().describe('Address to receive excess TON (defaults to sender). Usually your wallet address.'),
+      forward_ton_amount: z.string().optional().describe('Amount of TON to forward with transfer (in nanoTON). Default: "1"'),
+      forward_payload: z.string().optional().describe('Optional text comment for the transfer'),
     },
   },
-  async ({ jetton_wallet_address, recipient_address, jetton_amount, forward_ton_amount, comment }) => {
+  async ({ recipient_address, jetton_amount, response_address, forward_ton_amount, forward_payload }) => {
     try {
-      // Build jetton transfer body
-      // Standard jetton transfer format:
-      // - op code: 0x0f8a7ea5 (jetton transfer)
-      // - query_id: 0 (64 bits)
-      // - amount: jetton amount (coins)
-      // - destination: recipient address
-      // - response_destination: sender address (for excess return)
-      // - custom_payload: null (1 bit)
-      // - forward_ton_amount: TON to forward (coins)
-      // - forward_payload: comment or empty
-      
+      // Validate addresses
+      let recipientAddr: Address;
+      let responseAddr: Address | null = null;
+
+      try {
+        recipientAddr = Address.parse(recipient_address);
+      } catch (error) {
+        return {
+          content: [{ 
+            type: 'text', 
+            text: `Invalid recipient address: ${recipient_address}. Use format like EQD... or UQD...` 
+          }],
+          isError: true,
+        };
+      }
+
+      if (response_address) {
+        try {
+          responseAddr = Address.parse(response_address);
+        } catch (error) {
+          return {
+            content: [{ 
+              type: 'text', 
+              text: `Invalid response address: ${response_address}. Use format like EQD... or UQD...` 
+            }],
+            isError: true,
+          };
+        }
+      }
+
+      // Validate jetton amount
+      if (!/^\d+$/.test(jetton_amount)) {
+        return {
+          content: [{ 
+            type: 'text', 
+            text: `Invalid jetton amount: "${jetton_amount}". Must be a numeric string.` 
+          }],
+          isError: true,
+        };
+      }
+
       const forwardAmount = forward_ton_amount || "1";
-      
-      // This is a simplified explanation - actual BOC building requires ton-core library
-      const info = {
-        jetton_wallet: jetton_wallet_address,
-        recipient: recipient_address,
-        amount: jetton_amount,
-        forward_amount: forwardAmount,
-        ...(comment && { comment }),
+      if (!/^\d+$/.test(forwardAmount)) {
+        return {
+          content: [{ 
+            type: 'text', 
+            text: `Invalid forward TON amount: "${forwardAmount}". Must be a numeric string in nanoTON.` 
+          }],
+          isError: true,
+        };
+      }
+
+      // Build jetton transfer payload
+      // Standard TEP-74 jetton transfer format
+      const body = beginCell()
+        .storeUint(0x0f8a7ea5, 32) // jetton transfer op code
+        .storeUint(0, 64) // query_id
+        .storeCoins(BigInt(jetton_amount)) // amount
+        .storeAddress(recipientAddr) // destination
+        .storeAddress(responseAddr) // response_destination (null if not provided)
+        .storeBit(0) // custom_payload (null)
+        .storeCoins(BigInt(forwardAmount)); // forward_ton_amount
+
+      // Add forward payload if comment provided
+      if (forward_payload) {
+        const commentCell = beginCell()
+          .storeUint(0, 32) // text comment op code
+          .storeStringTail(forward_payload)
+          .endCell();
+        
+        body.storeBit(1); // forward_payload present
+        body.storeRef(commentCell);
+      } else {
+        body.storeBit(0); // no forward_payload
+      }
+
+      const payloadCell = body.endCell();
+      const payloadBase64 = payloadCell.toBoc().toString('base64');
+
+      const result = {
+        payload: payloadBase64,
+        details: {
+          recipient: recipient_address,
+          jetton_amount: jetton_amount,
+          forward_ton_amount: forwardAmount,
+          response_destination: response_address || 'null (excess returned to sender)',
+          ...(forward_payload && { comment: forward_payload }),
+        }
       };
 
       return {
         content: [{ 
           type: 'text', 
-          text: `⚠️ Jetton Transfer Payload Builder\n\nTo send jettons, you need to:\n\n1. **Use a library like @ton/ton**: This MCP doesn't include BOC building to keep it lightweight\n\n2. **Build the payload with these parameters**:\n   - Op code: 0x0f8a7ea5\n   - Query ID: 0\n   - Jetton amount: ${jetton_amount}\n   - Recipient: ${recipient_address}\n   - Forward TON: ${forwardAmount} nanoTON\n   ${comment ? `- Comment: "${comment}"` : ''}\n\n3. **Call send_transaction**:\n   - to: ${jetton_wallet_address} (your jetton wallet, NOT the recipient)\n   - amount: "50000000" (0.05 TON for gas)\n   - payload: <base64 BOC from step 2>\n\n💡 **Example with @ton/ton**:\n\`\`\`javascript\nimport { beginCell, Address } from '@ton/ton';\n\nconst body = beginCell()\n  .storeUint(0x0f8a7ea5, 32) // jetton transfer op\n  .storeUint(0, 64) // query_id\n  .storeCoins(${jetton_amount}) // amount\n  .storeAddress(Address.parse('${recipient_address}')) // destination\n  .storeAddress(Address.parse('<your-address>')) // response_destination\n  .storeBit(0) // custom_payload\n  .storeCoins(${forwardAmount}) // forward_ton_amount\n  .storeBit(0) // forward_payload (empty or use storeBit(1) + storeRef for comment)\n  .endCell();\n\nconst payload = body.toBoc().toString('base64');\n\`\`\`\n\nThen use: send_transaction with to='${jetton_wallet_address}', amount='50000000', payload='<base64>'` 
+          text: `✅ Jetton Transfer Payload Built!\n\n**Base64 Payload:**\n\`\`\`\n${payloadBase64}\n\`\`\`\n\n**Details:**\n${JSON.stringify(result.details, null, 2)}\n\n**Next Step:**\nUse send_transaction with:\n- to: <YOUR_JETTON_WALLET_ADDRESS> (not the recipient!)\n- amount: "50000000" (0.05 TON for gas)\n- payload: "${payloadBase64}"\n\n⚠️ Important: The 'to' address must be YOUR jetton wallet address, not the recipient's address!` 
         }],
       };
     } catch (error) {
       const err = error as Error;
       return {
-        content: [{ type: 'text', text: `Error: ${err.message}` }],
+        content: [{ type: 'text', text: `Error building payload: ${err.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+/**
+ * Tool: Build NFT transfer payload
+ */
+server.registerTool(
+  'build_nft_transfer_payload',
+  {
+    title: 'Build NFT Transfer Payload',
+    description: 'Build a payload for NFT transfers. Returns base64 BOC payload ready to use with send_transaction.',
+    inputSchema: {
+      new_owner_address: z.string().describe('New owner TON wallet address (recipient)'),
+      response_address: z.string().optional().describe('Address to receive excess TON. Usually your wallet address.'),
+      forward_amount: z.string().optional().describe('Amount of TON to forward to new owner (in nanoTON). Default: "1"'),
+      forward_payload: z.string().optional().describe('Optional text comment for the transfer'),
+    },
+  },
+  async ({ new_owner_address, response_address, forward_amount, forward_payload }) => {
+    try {
+      // Validate addresses
+      let newOwnerAddr: Address;
+      let responseAddr: Address | null = null;
+
+      try {
+        newOwnerAddr = Address.parse(new_owner_address);
+      } catch (error) {
+        return {
+          content: [{ 
+            type: 'text', 
+            text: `Invalid new owner address: ${new_owner_address}. Use format like EQD... or UQD...` 
+          }],
+          isError: true,
+        };
+      }
+
+      if (response_address) {
+        try {
+          responseAddr = Address.parse(response_address);
+        } catch (error) {
+          return {
+            content: [{ 
+              type: 'text', 
+              text: `Invalid response address: ${response_address}. Use format like EQD... or UQD...` 
+            }],
+            isError: true,
+          };
+        }
+      }
+
+      const forwardAmt = forward_amount || "1";
+      if (!/^\d+$/.test(forwardAmt)) {
+        return {
+          content: [{ 
+            type: 'text', 
+            text: `Invalid forward amount: "${forwardAmt}". Must be a numeric string in nanoTON.` 
+          }],
+          isError: true,
+        };
+      }
+
+      // Build NFT transfer payload
+      // Standard TEP-62 NFT transfer format
+      const body = beginCell()
+        .storeUint(0x5fcc3d14, 32) // NFT transfer op code
+        .storeUint(0, 64) // query_id
+        .storeAddress(newOwnerAddr) // new_owner
+        .storeAddress(responseAddr) // response_destination
+        .storeBit(0) // custom_payload (null)
+        .storeCoins(BigInt(forwardAmt)); // forward_amount
+
+      // Add forward payload if comment provided
+      if (forward_payload) {
+        const commentCell = beginCell()
+          .storeUint(0, 32) // text comment op code
+          .storeStringTail(forward_payload)
+          .endCell();
+        
+        body.storeBit(1); // forward_payload present
+        body.storeRef(commentCell);
+      } else {
+        body.storeBit(0); // no forward_payload
+      }
+
+      const payloadCell = body.endCell();
+      const payloadBase64 = payloadCell.toBoc().toString('base64');
+
+      const result = {
+        payload: payloadBase64,
+        details: {
+          new_owner: new_owner_address,
+          forward_amount: forwardAmt,
+          response_destination: response_address || 'null (excess returned to sender)',
+          ...(forward_payload && { comment: forward_payload }),
+        }
+      };
+
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `✅ NFT Transfer Payload Built!\n\n**Base64 Payload:**\n\`\`\`\n${payloadBase64}\n\`\`\`\n\n**Details:**\n${JSON.stringify(result.details, null, 2)}\n\n**Next Step:**\nUse send_transaction with:\n- to: <NFT_ITEM_ADDRESS> (the specific NFT contract address)\n- amount: "50000000" (0.05 TON for gas)\n- payload: "${payloadBase64}"\n\n⚠️ Important: The 'to' address must be the NFT item's contract address!` 
+        }],
+      };
+    } catch (error) {
+      const err = error as Error;
+      return {
+        content: [{ type: 'text', text: `Error building NFT payload: ${err.message}` }],
         isError: true,
       };
     }
@@ -539,5 +718,7 @@ await server.connect(transport);
 console.error('🚀 TON Connect MCP Server Ready!');
 console.error(`Manifest: ${MANIFEST_URL === DEFAULT_MANIFEST_URL ? 'Palette (default)' : MANIFEST_URL}`);
 console.error('✨ Tools: list_wallets, connect_wallet, disconnect_wallet, get_wallet_status,');
-console.error('         send_transaction, build_jetton_transfer_payload, sign_proof');
+console.error('         send_transaction, build_jetton_transfer_payload,');
+console.error('         build_nft_transfer_payload, sign_proof');
+console.error('📦 BOC Building: Enabled (@ton/ton included)');
 

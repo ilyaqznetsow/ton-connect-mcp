@@ -195,9 +195,12 @@ The MCP client (Cursor/Claude/VS Code) automatically:
   - Contract deployments with state_init
   - Raw base64 BOC payloads
 
-### Helpers
-- **build_jetton_transfer_payload** - Guide for jetton (token) transfers
+### Payload Builders (BOC Building)
+- **build_jetton_transfer_payload** - Build jetton (token) transfer payloads
+- **build_nft_transfer_payload** - Build NFT transfer payloads
 - **sign_proof** - Authentication proof signing
+
+> 🎯 **BOC Building Included**: The server includes `@ton/ton` library for building transaction payloads. No external tools needed!
 
 ## Testing
 
@@ -213,9 +216,10 @@ Try these in your AI assistant:
 5. "Send 1 TON to UQA..."
 
 ### Advanced Transactions
-6. "Help me send USDT jettons to my friend"
-7. "Send a transaction with this base64 payload: te6c..."
-8. "Deploy a contract with this state_init: te6c..."
+6. "Build a jetton transfer payload to send 10 USDT to EQD..."
+7. "Build an NFT transfer payload to send to UQA..."
+8. "Send a transaction with this base64 payload: te6c..."
+9. "Deploy a contract with this state_init: te6c..."
 
 ## Troubleshooting
 
@@ -257,13 +261,22 @@ Use the `comment` parameter - it's automatically encoded:
 ```
 
 ### Jetton (Token) Transfers
-Use `build_jetton_transfer_payload` for guidance, then:
+Build the payload first, then send:
 ```javascript
-{
-  to: "EQC...",  // Your jetton wallet address
-  amount: "50000000",  // Gas: 0.05 TON
-  payload: "te6c..."  // Base64 BOC from @ton/ton library
-}
+// Step 1: Build payload
+build_jetton_transfer_payload({
+  recipient_address: "EQD...",  // Where jettons go
+  jetton_amount: "1000000",     // Amount (with decimals)
+  forward_payload: "Payment"    // Optional comment
+})
+// Returns base64 BOC payload
+
+// Step 2: Send transaction
+send_transaction({
+  to: "EQC...",           // YOUR jetton wallet address
+  amount: "50000000",     // Gas: 0.05 TON
+  payload: "<from_step_1>" // The base64 BOC
+})
 ```
 
 ### Custom Smart Contract Calls
@@ -294,8 +307,13 @@ Include state_init:
 - **Protocol**: Real TON Connect SDK - no mocks
 - **Session**: Single session per process instance
 - **Manifest**: Palette Finance (default)
-- **Dependencies**: Minimal (MCP SDK, TON Connect SDK, Zod)
-- **Payload Support**: Comments, custom BOC, state_init for all transaction types
+- **Dependencies**: MCP SDK, TON Connect SDK, @ton/ton (for BOC building), Zod
+- **Payload Support**: 
+  - Comments (auto-encoded)
+  - Jetton transfers (TEP-74 compliant)
+  - NFT transfers (TEP-62 compliant)
+  - Custom BOC payloads
+  - State init for contract deployment
 
 ### Why stdio?
 
