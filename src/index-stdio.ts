@@ -8,19 +8,15 @@ import { MemoryStorage } from './storage.js';
 const DEFAULT_MANIFEST_URL = 'https://app.palette.finance/tonconnect-manifest.json';
 const MANIFEST_URL = process.env.TONCONNECT_MANIFEST_URL || DEFAULT_MANIFEST_URL;
 
-// Create single TON Connect instance
+// Create single TON Connect instance for stdio session
 const storage = new MemoryStorage();
 const connector = new TonConnect({
   manifestUrl: MANIFEST_URL,
   storage,
 });
 
-// Try to restore previous connection
-try {
-  await connector.restoreConnection();
-} catch (error) {
-  // Silently ignore restore errors
-}
+// Restore connection on startup
+await connector.restoreConnection();
 
 // Create MCP server
 const server = new McpServer({

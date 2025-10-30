@@ -57,51 +57,61 @@ Request signature for data. The user will need to approve it in their connected 
 
 ## Quick Start
 
-**Literally zero setup!** Just run one command:
+**Add to Cursor in 30 seconds:**
 
-```bash
-npx ton-connect-mcp
+1. Open Cursor Settings
+2. Go to **Features** → **Model Context Protocol**
+3. Click **Add Server** and paste:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "ton-connect-mcp"]
+}
 ```
 
-That's it! 🎉 The server:
+That's it! 🎉 Cursor will auto-start the server when needed.
+
 - Uses Palette's manifest by default ([https://app.palette.finance/tonconnect-manifest.json](https://app.palette.finance/tonconnect-manifest.json))
-- Stores sessions in-memory (no Redis needed)
-- Works instantly with Cursor, Claude, and any MCP client
+- Stores sessions in-memory
+- No manual server management needed
 
-### Installation Options
+### For Claude Desktop
 
-**Option 1: npx (Recommended - No Installation)**
-```bash
-npx ton-connect-mcp
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "ton-connect": {
+      "command": "npx",
+      "args": ["-y", "ton-connect-mcp"]
+    }
+  }
+}
 ```
 
-**Option 2: Global Install**
-```bash
-npm install -g ton-connect-mcp
-ton-connect-mcp
+### For VS Code
+
+Settings → Extensions → GitHub Copilot → MCP Servers:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "ton-connect-mcp"]
+}
 ```
 
 ### Optional Configuration
 
-**Custom Branding** (optional):
+Set environment variables before the MCP client starts:
+
+**Custom Manifest** (optional):
 ```bash
 export TONCONNECT_MANIFEST_URL="https://your-app.com/tonconnect-manifest.json"
-npx ton-connect-mcp
 ```
 
-**Persistent Storage** (optional):
-```bash
-# Only if you need wallet connections to survive server restarts
-docker run -d -p 6379:6379 redis:alpine
-export REDIS_URL="redis://localhost:6379"
-npx ton-connect-mcp
-```
-
-**Custom Port** (optional):
-```bash
-export PORT=8080
-npx ton-connect-mcp
-```
+Then restart your MCP client (Cursor/Claude/etc)
 
 ## Installation for Development
 
@@ -160,149 +170,41 @@ Your manifest must be:
 }
 ```
 
-## Running
+## How It Works
 
-### For End Users
+The MCP client (Cursor/Claude/VS Code) automatically:
+1. Downloads the package with `npx`
+2. Starts the server when needed
+3. Connects via stdio (standard input/output)
+4. Stops it when done
 
-**Just run it!** No configuration needed:
+**You don't manually start or stop anything!**
 
-```bash
-npx ton-connect-mcp
-```
+## Testing
 
-The server starts instantly with:
-- ✅ Palette's TON Connect manifest (default)
-- ✅ In-memory storage
-- ✅ Port 3000
-- ✅ Ready for Cursor, Claude, VS Code, or any MCP client!
+Try these in your AI assistant:
 
-### For Development
-
-```bash
-git clone https://github.com/ilyaqznetsow/ton-connect-mcp.git
-cd ton-connect-mcp
-npm install
-npm run dev
-```
-
-### For Production (optional Redis)
-
-Only if you need persistence across restarts:
-
-```bash
-# Start Redis
-docker run -d -p 6379:6379 redis:alpine
-
-# Run with Redis
-export REDIS_URL="redis://localhost:6379"
-npm run build
-npm start
-```
-
-Server runs on `http://localhost:3000/mcp` by default.
-
-## Connecting from MCP Clients
-
-First, start the server:
-
-```bash
-npx ton-connect-mcp
-```
-
-Then connect your MCP client:
-
-### Claude Desktop
-
-Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
-
-```json
-{
-  "mcpServers": {
-    "ton-connect": {
-      "transport": {
-        "type": "http",
-        "url": "http://localhost:3000/mcp"
-      }
-    }
-  }
-}
-```
-
-### Cursor
-
-Add via Cursor settings or use the deeplink:
-```
-cursor://anysphere.cursor-deeplink/mcp/install?name=ton-connect&config=eyJ1cmwiOiJodHRwOi8vbG9jYWxob3N0OjMwMDAvbWNwIn0%3D
-```
-
-### VS Code
-
-```bash
-code --add-mcp "{\"name\":\"ton-connect\",\"type\":\"http\",\"url\":\"http://localhost:3000/mcp\"}"
-```
-
-### Using with Docker Compose
-
-Create a `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-services:
-  redis:
-    image: redis:alpine
-    ports:
-      - "6379:6379"
-  
-  ton-connect-mcp:
-    image: node:20-alpine
-    command: npx @your-org/ton-connect-mcp
-    environment:
-      - TONCONNECT_MANIFEST_URL=https://your-app.com/tonconnect-manifest.json
-      - REDIS_URL=redis://redis:6379
-      - PORT=3000
-    ports:
-      - "3000:3000"
-    depends_on:
-      - redis
-```
-
-Then run:
-```bash
-docker-compose up
-```
+1. "What TON wallets can I connect?"
+2. "Connect my Tonkeeper wallet"
+3. "What's my wallet address?"
+4. "Send 0.1 TON to EQD..."
 
 ## Implementation Details
 
-This MCP server provides a real, production-ready TON Connect integration:
+- **Transport**: stdio (standard input/output) - auto-managed by MCP clients
+- **Storage**: In-memory (perfect for personal use)
+- **Protocol**: Real TON Connect SDK - no mocks
+- **Session**: Single session per process instance
+- **Manifest**: Palette Finance (default)
+- **Dependencies**: Minimal (MCP SDK, TON Connect SDK, Zod)
 
-- **No Mock Data**: All wallet connections and transactions use the actual TON Connect protocol
-- **Zero Setup**: Works out-of-the-box with in-memory storage
-- **Session Isolation**: Each MCP session gets its own TON Connect instance
-- **Real Wallet Connections**: Wallets are discovered from the official TON Connect wallet registry
-- **Transaction Signing**: All transactions are signed by the user's actual wallet
-- **Error Handling**: Proper handling of user rejections and connection errors
-- **Optional Redis**: Add persistence if needed - completely optional
+### Why stdio?
 
-### Storage Modes
-
-**In-Memory (Default)**
-- Perfect for personal use with Cursor/Claude
-- No setup required
-- Wallet connections work during your session
-- Clears on server restart (just reconnect your wallet)
-
-**Redis (Optional)**
-- For production deployments
-- Wallet connections persist across restarts
-- Multiple server instances can share state
-- Set `REDIS_URL` to enable
-
-### Architecture (SOLID & KISS Principles)
-
-- **Single Responsibility**: Each class has one clear purpose
-- **Dependency Inversion**: Components depend on abstractions (`IStorage` interface)
-- **Interface Segregation**: Clean, focused interfaces
-- **KISS**: Simple implementation - no over-engineering, works instantly
+- **Auto-start**: MCP client launches the server automatically
+- **Auto-stop**: Server stops when not needed
+- **No ports**: No port conflicts or firewall issues
+- **Simple**: No HTTP server, no manual management
+- **Perfect for AI assistants**: Cursor, Claude, VS Code handle everything
 
 ## Usage Example
 
