@@ -180,14 +180,42 @@ The MCP client (Cursor/Claude/VS Code) automatically:
 
 **You don't manually start or stop anything!**
 
+## Available Tools
+
+### Wallet Management
+- **list_wallets** - Get all available TON Connect wallets
+- **connect_wallet** - Connect to a specific wallet (Tonkeeper, MyTonWallet, etc.)
+- **disconnect_wallet** - Disconnect current wallet
+- **get_wallet_status** - Check connection status and wallet info
+
+### Transactions
+- **send_transaction** - Send TON with optional payloads
+  - Simple transfers with comments
+  - Custom smart contract calls
+  - Contract deployments with state_init
+  - Raw base64 BOC payloads
+
+### Helpers
+- **build_jetton_transfer_payload** - Guide for jetton (token) transfers
+- **sign_proof** - Authentication proof signing
+
 ## Testing
 
 Try these in your AI assistant:
 
+### Basic Wallet Operations
 1. "What TON wallets can I connect?"
 2. "Connect my Tonkeeper wallet"
 3. "What's my wallet address?"
-4. "Send 0.1 TON to EQD..."
+
+### Simple Transfers
+4. "Send 0.1 TON to EQD... with comment 'Hello TON!'"
+5. "Send 1 TON to UQA..."
+
+### Advanced Transactions
+6. "Help me send USDT jettons to my friend"
+7. "Send a transaction with this base64 payload: te6c..."
+8. "Deploy a contract with this state_init: te6c..."
 
 ## Troubleshooting
 
@@ -216,6 +244,49 @@ npm install -g ton-connect-mcp@latest
 3. Verify the config is correct
 4. Try removing and re-adding the server
 
+## Transaction Payloads
+
+### Simple Transfers with Comments
+Use the `comment` parameter - it's automatically encoded:
+```javascript
+{
+  to: "EQD...",
+  amount: "100000000",  // 0.1 TON
+  comment: "Payment for services"
+}
+```
+
+### Jetton (Token) Transfers
+Use `build_jetton_transfer_payload` for guidance, then:
+```javascript
+{
+  to: "EQC...",  // Your jetton wallet address
+  amount: "50000000",  // Gas: 0.05 TON
+  payload: "te6c..."  // Base64 BOC from @ton/ton library
+}
+```
+
+### Custom Smart Contract Calls
+Provide raw base64 BOC payload:
+```javascript
+{
+  to: "EQA...",  // Contract address
+  amount: "10000000",  // 0.01 TON
+  payload: "te6c..."  // Your custom BOC
+}
+```
+
+### Contract Deployment
+Include state_init:
+```javascript
+{
+  to: "EQB...",  // New contract address
+  amount: "100000000",  // Initial balance
+  state_init: "te6c...",  // Contract code + data
+  payload: "te6c..."  // Optional init message
+}
+```
+
 ## Implementation Details
 
 - **Transport**: stdio (standard input/output) - auto-managed by MCP clients
@@ -224,6 +295,7 @@ npm install -g ton-connect-mcp@latest
 - **Session**: Single session per process instance
 - **Manifest**: Palette Finance (default)
 - **Dependencies**: Minimal (MCP SDK, TON Connect SDK, Zod)
+- **Payload Support**: Comments, custom BOC, state_init for all transaction types
 
 ### Why stdio?
 

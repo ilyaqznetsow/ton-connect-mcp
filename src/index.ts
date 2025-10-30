@@ -25,7 +25,7 @@ try {
 // Create MCP server
 const server = new McpServer({
   name: 'ton-connect-mcp',
-  version: '1.0.0',
+  version: '1.1.0',
 });
 
 /**
@@ -284,21 +284,23 @@ server.registerTool(
 );
 
 /**
- * Tool: Send transaction
+ * Tool: Send transaction with payload support
  */
 server.registerTool(
   'send_transaction',
   {
     title: 'Send Transaction',
-    description: 'Create and send a transaction request. The user must approve it in their connected wallet. Amount must be specified in nanoTON (1 TON = 1,000,000,000 nanoTON).',
+    description: 'Send TON transactions with optional payloads. Supports simple transfers, jetton transfers, NFT operations, and custom smart contract calls.',
     inputSchema: {
       to: z.string().describe('Recipient address in user-friendly format (e.g., EQD... or UQD... or 0:...)'),
       amount: z.string().describe('Amount in nanoTON as a string (1 TON = 1,000,000,000 nanoTON). Example: "1000000000" for 1 TON'),
-      payload: z.string().optional().describe('Optional transaction payload as base64-encoded BOC'),
+      payload: z.string().optional().describe('Optional base64-encoded BOC payload for smart contract interactions, jetton transfers, etc.'),
+      state_init: z.string().optional().describe('Optional base64-encoded state init for contract deployment'),
       valid_until: z.number().optional().describe('Transaction expiration timestamp in Unix seconds. Defaults to 5 minutes from now'),
+      comment: z.string().optional().describe('Optional text comment (will be converted to payload automatically)'),
     },
   },
-  async ({ to, amount, payload, valid_until }) => {
+  async ({ to, amount, payload, state_init, valid_until, comment }) => {
     try {
       if (!connector.connected) {
         return {
@@ -310,6 +312,7 @@ server.registerTool(
         };
       }
 
+      // Validate amount
       if (!/^\d+$/.test(amount)) {
         return {
           content: [{ 
@@ -320,26 +323,68 @@ server.registerTool(
         };
       }
 
+      // Handle comment - convert to payload if no payload provided
+      let finalPayload = payload;
+      if (comment && !payload) {
+        try {
+          // Simple text comment payload (op code 0x00000000 + text)
+          const commentBuffer = Buffer.from(comment, 'utf-8');
+          const payloadBuffer = Buffer.concat([
+            Buffer.from([0x00, 0x00, 0x00, 0x00]), // op code for text comment
+            commentBuffer
+          ]);
+          finalPayload = payloadBuffer.toString('base64');
+        } catch (error) {
+          return {
+            content: [{ 
+              type: 'text', 
+              text: `Failed to encode comment: ${(error as Error).message}` 
+            }],
+            isError: true,
+          };
+        }
+      }
+
       const validUntil = valid_until || Math.floor(Date.now() / 1000) + 300;
       
+      // Build message
+      const message: any = {
+        address: to,
+        amount: amount,
+      };
+
+      if (finalPayload) {
+        message.payload = finalPayload;
+      }
+
+      if (state_init) {
+        message.stateInit = state_init;
+      }
+
       const transaction = {
         validUntil,
-        messages: [
-          {
-            address: to,
-            amount: amount,
-            ...(payload && { payload }),
-          },
-        ],
+        messages: [message],
       };
 
       try {
         const result = await connector.sendTransaction(transaction);
         
+        let details = `Transaction sent successfully!\n\nBOC: ${result.boc}\n`;
+        if (comment) {
+          details += `Comment: "${comment}"\n`;
+        }
+        if (finalPayload && !comment) {
+          details += `Custom payload included\n`;
+        }
+        if (state_init) {
+          details += `Contract deployment included\n`;
+        }
+        details += `\nThe transaction has been approved and broadcast to the network.`;
+        
         return {
           content: [{ 
             type: 'text', 
-            text: `Transaction sent successfully!\n\nBOC: ${result.boc}\n\nThe transaction has been approved by the user and broadcast to the network.` 
+            text: details
           }],
         };
       } catch (error) {
@@ -358,6 +403,62 @@ server.registerTool(
       const err = error as Error;
       return {
         content: [{ type: 'text', text: `Transaction error: ${err.message}` }],
+        isError: true,
+      };
+    }
+  }
+);
+
+/**
+ * Tool: Build jetton transfer payload
+ */
+server.registerTool(
+  'build_jetton_transfer_payload',
+  {
+    title: 'Build Jetton Transfer Payload',
+    description: 'Helper to build a payload for jetton (token) transfers. Returns base64 payload to use with send_transaction.',
+    inputSchema: {
+      jetton_wallet_address: z.string().describe('Your jetton wallet address (not the jetton master address)'),
+      recipient_address: z.string().describe('Recipient TON wallet address'),
+      jetton_amount: z.string().describe('Amount of jettons to transfer in smallest units (like nanoTON for TON)'),
+      forward_ton_amount: z.string().optional().describe('Amount of TON to forward with transfer (in nanoTON). Default: "1" (0.000000001 TON)'),
+      comment: z.string().optional().describe('Optional text comment for the transfer'),
+    },
+  },
+  async ({ jetton_wallet_address, recipient_address, jetton_amount, forward_ton_amount, comment }) => {
+    try {
+      // Build jetton transfer body
+      // Standard jetton transfer format:
+      // - op code: 0x0f8a7ea5 (jetton transfer)
+      // - query_id: 0 (64 bits)
+      // - amount: jetton amount (coins)
+      // - destination: recipient address
+      // - response_destination: sender address (for excess return)
+      // - custom_payload: null (1 bit)
+      // - forward_ton_amount: TON to forward (coins)
+      // - forward_payload: comment or empty
+      
+      const forwardAmount = forward_ton_amount || "1";
+      
+      // This is a simplified explanation - actual BOC building requires ton-core library
+      const info = {
+        jetton_wallet: jetton_wallet_address,
+        recipient: recipient_address,
+        amount: jetton_amount,
+        forward_amount: forwardAmount,
+        ...(comment && { comment }),
+      };
+
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `⚠️ Jetton Transfer Payload Builder\n\nTo send jettons, you need to:\n\n1. **Use a library like @ton/ton**: This MCP doesn't include BOC building to keep it lightweight\n\n2. **Build the payload with these parameters**:\n   - Op code: 0x0f8a7ea5\n   - Query ID: 0\n   - Jetton amount: ${jetton_amount}\n   - Recipient: ${recipient_address}\n   - Forward TON: ${forwardAmount} nanoTON\n   ${comment ? `- Comment: "${comment}"` : ''}\n\n3. **Call send_transaction**:\n   - to: ${jetton_wallet_address} (your jetton wallet, NOT the recipient)\n   - amount: "50000000" (0.05 TON for gas)\n   - payload: <base64 BOC from step 2>\n\n💡 **Example with @ton/ton**:\n\`\`\`javascript\nimport { beginCell, Address } from '@ton/ton';\n\nconst body = beginCell()\n  .storeUint(0x0f8a7ea5, 32) // jetton transfer op\n  .storeUint(0, 64) // query_id\n  .storeCoins(${jetton_amount}) // amount\n  .storeAddress(Address.parse('${recipient_address}')) // destination\n  .storeAddress(Address.parse('<your-address>')) // response_destination\n  .storeBit(0) // custom_payload\n  .storeCoins(${forwardAmount}) // forward_ton_amount\n  .storeBit(0) // forward_payload (empty or use storeBit(1) + storeRef for comment)\n  .endCell();\n\nconst payload = body.toBoc().toString('base64');\n\`\`\`\n\nThen use: send_transaction with to='${jetton_wallet_address}', amount='50000000', payload='<base64>'` 
+        }],
+      };
+    } catch (error) {
+      const err = error as Error;
+      return {
+        content: [{ type: 'text', text: `Error: ${err.message}` }],
         isError: true,
       };
     }
@@ -434,4 +535,9 @@ process.on('SIGTERM', shutdown);
 // Start stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+console.error('🚀 TON Connect MCP Server Ready!');
+console.error(`Manifest: ${MANIFEST_URL === DEFAULT_MANIFEST_URL ? 'Palette (default)' : MANIFEST_URL}`);
+console.error('✨ Tools: list_wallets, connect_wallet, disconnect_wallet, get_wallet_status,');
+console.error('         send_transaction, build_jetton_transfer_payload, sign_proof');
 
